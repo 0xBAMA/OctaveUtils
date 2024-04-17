@@ -5,9 +5,9 @@ pkg load statistics
 xDimension = 100;
 yDimension = 500;
 padding = 25;
-minWavelength = 400; # units of nm
-maxWavelength = 700; # units of nm
-numWavelengths = 3;
+global minWavelength = 400; # units of nm
+global maxWavelength = 700; # units of nm
+global numWavelengths = 3;
 
 # the buffers we're writing to
 global fieldImageWavelengths;
@@ -31,27 +31,45 @@ function result = remap( value, low1, high1, low2, high2 )
 	result = low2 + ( value - low1 ) * ( high2 - low2 ) / ( high1 - low1 );
 end
 
+function [ r, g, b ] = colorForWavelength( wavelength )
+	# convert zucconi spectra code
+end
+
+function [ distance, normal ] = ( rayOrigin, rayDirection, sphereCenter, sphereRadius )
+	
+end
+
+function shootRay( rayOrigin, rayDirection, rayWavelength )
+	global minWavelength; # units of nm
+	global maxWavelength; # units of nm
+	global numWavelengths;
+
+	# Ok, now they refract off the first surface, with wavelength dependent IoR
+		# eventually want to add at least the schlick approximation for reflectance - now, we will consider it only as a refracted ray
+	wavelengthBin = int32( floor( remap( rayWavelength, minWavelength, maxWavelength, 1, numWavelengths + 1 ) ) );
+	drawLine( rayOrigin, rayOrigin + displacement, wavelengthBin );
+
+	# refracted ray, intersecting with the second surface
+
+end
+
 # clear the sim field
 fieldImageWavelengths = zeros( xDimension, yDimension, numWavelengths );
 
-# replacing the loop below with a function that like, shoots a ray - shoot( sourcePoint, direction, wavelength )
-
-numSteps = 100
+numSteps = 100;
+raysPerStep = 100;
 for steps = 1:numSteps
 	# run the simulation for some number of rays
-	for ray = 1:100
+	for ray = 1:raysPerStep
 
 		# what wavelength am I? 400nm to 700nm, visible light spectra
 		rayWavelength = unifrnd( minWavelength, maxWavelength );
-		wavelengthBin = int32( floor( remap( rayWavelength, minWavelength, maxWavelength, 1, numWavelengths + 1 ) ) );
 
-		# what does a ray do? Starting on the far left hand side, at a random point along the height
+		# starting on the far left hand side, at a random point along the height
 		point = [ unifrnd( padding, xDimension - padding ) 0 ];
-		drawLine( point, point + [ 0 500 ], wavelengthBin );
 
-		# Ok, now they refract off the first surface, with wavelength dependent IoR
-
-		# and then...
+		# do the computation for this generated ray
+		shootRay( point, [ 0 1 ], wavelength );
 
 	end
 	printf( "\rStep %d of %d     ", steps, numSteps );
