@@ -1,0 +1,213 @@
+#! octave-interpreter-name -qf
+pkg load image
+pkg load statistics
+
+global xDimension = 500;
+global yDimension = 1500;
+global zMax = 5;
+
+global minWavelength = 400; # units of nm
+global maxWavelength = 700; # units of nm
+global numWavelengths = 20;
+
+# the buffers we're writing to
+global fieldImageWavelengths;
+
+# make vector unit length, return the original length
+function [ result, length ] = normalize( v )
+	length = sqrt( v( 1 ) * v( 1 ) + v( 2 ) * v( 2 ) + v( 3 ) * v( 3 ) );
+	result = ( v ) ./ length;
+end
+
+# refract a ray, about a normal vector, using the specified IoRs - does not handle TIR
+function result = refract( rayDirection, normal, n1, n2 )
+	eta = n1 / n2;
+	nDotD = dot( normal, rayDirection );
+	k = 1.0 - eta * eta * ( 1.0 - nDotD * nDotD );
+	if k < 0.0
+		result = [ 0 0 0 ];
+	else
+		result = eta * rayDirection - ( eta * nDotD + sqrt( k ) ) * normal;
+	endif
+end
+
+# remap a value from one range to another
+function result = remap( value, low1, high1, low2, high2 )
+	result = low2 + ( value - low1 ) * ( high2 - low2 ) / ( high1 - low1 );
+end
+
+# write some stuff to the fieldImage
+function drawLine( start, stop, wavelengthBin, intensity )
+
+	global xDimension;
+	global yDimension;
+	global zMax;
+
+	# this function should do the remapping, from the normalized sim space to image space
+	start( 1 ) = 0;
+	stop( 1 ) = 0;
+
+	# remapping y -1..1, to 0..xDimension
+	start( 2 ) = remap( start( 2 ), -1, 1, 0, xDimension );
+	stop( 2 ) = remap( stop( 2 ), -1, 1, 0, xDimension );
+
+	# remapping z 0..zmax to 0..yDimension
+	start( 3 ) = remap( start( 3 ), 0, zMax, 0, yDimension );
+	stop( 3 ) = remap( stop( 3 ), 0, zMax, 0, yDimension );
+
+	global fieldImageWavelengths;
+	[ offset, length ] = normalize( stop - start ); # normalizing the offset vector
+
+	# can do better lines than this
+	for i = 1:length
+		writeLoc = start + i * offset;
+		# check bounds, only write in bounds
+		x = int32( writeLoc( 2 ) );
+		y = int32( writeLoc( 3 ) );
+		if x == min( max( x, 1 ), xDimension ) && y == min( max( y, 1 ), yDimension )
+			fieldImageWavelengths( x, y, wavelengthBin ) += intensity;
+		endif
+	endfor
+end
+
+function result = bump3y ( x, offset )
+    y = [ 1 1 1 ] - x .* x;
+    result = min( max( ( y - offset ), 0 ), 1 );
+end
+
+function result = colorForWavelength( wavelength )
+	# convert zucconi spectra code
+	global minWavelength;
+	global maxWavelength;
+	x = remap( wavelength, minWavelength, maxWavelength, 0, 1 );
+    c1 = [ 3.54585104, 2.93225262, 2.41593945 ];
+    x1 = [ 0.69549072, 0.49228336, 0.27699880 ];
+    y1 = [ 0.02312639, 0.15225084, 0.52607955 ];
+    c2 = [ 3.90307140, 3.21182957, 3.96587128 ];
+    x2 = [ 0.11748627, 0.86755042, 0.66077860 ];
+    y2 = [ 0.84897130, 0.88445281, 0.73949448 ];
+    result = bump3y( c1 .* ( x - x1 ), y1 ) + bump3y( c2 .* ( x - x2 ), y2 );
+end
+
+function [ distance, normal ] = sphereIntersect( rayOrigin, rayDirection, sphereCenter, sphereRadius )
+	# implement ray-sphere, need normal vector, as well
+	oc = sphereCenter - rayOrigin;
+	tca = dot( oc, rayDirection );
+	d2 = dot( oc, oc ) - tca * tca;
+	radSq = sphereRadius^2;
+	if d2 > radSq
+		# there is no intersection with the sphere
+		distance = -1000;
+		normal = [ 0 0 0 ];
+	else
+		thc = sqrt( radSq - d2 );
+		t0 = tca - thc;
+		t1 = tca + thc;
+
+		if t0 > 0
+			distance = t0;
+			normal = normalize( ( rayOrigin + rayDirection * distance ) - sphereCenter );
+		elseif t1 > 0
+			distance = t1;
+			normal = -1 * normalize( ( rayOrigin + rayDirection * distance ) - sphereCenter );
+		else
+			distance = -1000;
+			normal = [ 0 0 0 ];
+		endif
+	endif
+end
+
+function shootRay( rayOrigin, rayDirection, rayWavelength )
+	global minWavelength; # units of nm
+	global maxWavelength; # units of nm
+	global numWavelengths;
+
+	# generate a wavelength value for this
+	wavelengthBin = int32( floor( remap( rayWavelength, minWavelength, maxWavelength, 1, numWavelengths + 0.999 ) ) );
+
+	# Ok, now they refract off the first surface, with wavelength dependent IoR
+		# eventually want to add at least the Schlick approximation for reflectance - now, we will consider it only as a refracted ray
+
+	# Since the ray starts at zero units along the z axis, the sphere for the first element will be centered a small amount further along z
+		# than the radius of curvature. This makes it so that we get a positive first hit with the outer sphere surface.
+	elementRadius = 3.0;
+	elementCenter = [ 0 0 elementRadius + 0.1 ];
+
+	# getting the ray
+	[ distance, normal ] = sphereIntersect( rayOrigin, rayDirection, elementCenter, elementRadius );
+	displacement = distance * rayDirection;
+
+	# drawing the path of the ray's travel to the first interface
+	drawLine( rayOrigin, rayOrigin + displacement, wavelengthBin, 1 );
+
+
+
+	# compute the refracted ray, to test against the second surface
+	# iorForWavelength = 1.5046 + 0.00420 / ( rayWavelength * rayWavelength ); # cauchy eq for BK7 Borosilicate glass
+	iorForWavelength = remap( rayWavelength, 400, 700, 1.65, 1.5 );
+	rayOrigin = rayOrigin + displacement;
+	rayDirection = refract( rayDirection, normal, 1.0, iorForWavelength );
+
+	# place the second sphere, so that the center of the lens shape is slightly in front of the front surface of that element
+	elementRadius = 3.0;
+	elementCenter = [ 0 0 ( -1 * elementRadius ) + 0.5 ];
+	[ distance, normal ] = sphereIntersect( rayOrigin, rayDirection, elementCenter, elementRadius );
+	displacement = distance * rayDirection;
+
+	# and draw that ray's path of travel
+	drawLine( rayOrigin, rayOrigin + displacement, wavelengthBin, 1 );
+
+
+
+	# and do the next intersection and refraction, draw the segment
+	rayOrigin = rayOrigin + displacement;
+	rayDirection = refract( rayDirection, normal, iorForWavelength, 1.0 );
+	displacement = rayDirection * 5;
+	drawLine( rayOrigin, rayOrigin + displacement, wavelengthBin, 1 );
+
+
+end
+
+# clear the sim field, pixel wavelength histograms
+# fieldImageWavelengths = zeros( xDimension, yDimension, numWavelengths );
+
+# run some N rays
+numRays = 2000;
+for ray = 1:numRays
+	shootRay( [ 0 unifrnd( -0.9, 0.9 ) 0 ], [ 0 0 1 ], unifrnd( minWavelength, maxWavelength ) );
+	printf( "\rProcessing ray %d of %d          ", ray, numRays );
+end
+
+# create the output image
+fieldImage = zeros( xDimension, yDimension, 3 );
+
+# resolve the field image, from the wavelength bin histograms - some kind of vector mixing... yeah. tbd
+# first things first, just 3 channel, matching
+
+# need to compute the weighted output color, histogram times the corresponding colors for each frequency bin
+wavelengths = linspace( minWavelength + 1, maxWavelength - 1, numWavelengths );
+colors = zeros( numWavelengths, 3 );
+for i = 1:numWavelengths
+	colors( i, : ) = colorForWavelength( wavelengths( i ) );
+end
+
+# determine cell with max total flux to scale the overall image accordingly
+# normalizing the histogram stuff...
+maxFlux = max( fieldImageWavelengths( : ) );
+fieldImageWavelengthsNormalized = fieldImageWavelengths ./ maxFlux;
+
+for x = 1:xDimension
+	for y = 1:yDimension
+		# make this a 1d thing, "strip off singleton dimensions"
+		fieldImage( x, y, : ) = sum( colors .* squeeze( fieldImageWavelengthsNormalized( x, y, : ) ), 1 );
+	endfor
+endfor
+
+# elementwise max of wavelengths bins, across the image... take the max of that... sum of that?
+
+image( fieldImage );
+
+# save out the fieldImage
+imwrite( fieldImage, 'test.png', 'png' );
+printf( "Image Written.\n" );
+# close all
