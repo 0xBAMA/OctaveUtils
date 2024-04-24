@@ -2,13 +2,13 @@
 pkg load image
 pkg load statistics
 
-global xDimension = 500;
-global yDimension = 1500;
-global zMax = 5;
+global xDimension = 1200;
+global yDimension = 3000;
+global zMax = 8;
 
 global minWavelength = 400; # units of nm
 global maxWavelength = 700; # units of nm
-global numWavelengths = 20;
+global numWavelengths = 30;
 
 # the buffers we're writing to
 global fieldImageWavelengths;
@@ -130,7 +130,7 @@ function shootRay( rayOrigin, rayDirection, rayWavelength )
 
 	# Since the ray starts at zero units along the z axis, the sphere for the first element will be centered a small amount further along z
 		# than the radius of curvature. This makes it so that we get a positive first hit with the outer sphere surface.
-	elementRadius = 3.0;
+	elementRadius = 5.0;
 	elementCenter = [ 0 0 elementRadius + 0.1 ];
 
 	# getting the ray
@@ -140,16 +140,31 @@ function shootRay( rayOrigin, rayDirection, rayWavelength )
 	# drawing the path of the ray's travel to the first interface
 	drawLine( rayOrigin, rayOrigin + displacement, wavelengthBin, 1 );
 
-
-
 	# compute the refracted ray, to test against the second surface
-	# iorForWavelength = 1.5046 + 0.00420 / ( rayWavelength * rayWavelength ); # cauchy eq for BK7 Borosilicate glass
-	iorForWavelength = remap( rayWavelength, 400, 700, 1.65, 1.5 );
+	wavelengthFactor = ( 0.001 * rayWavelength ) ^ 2; # units are ... 0.1micron's, squared
+
+	materialSelect = 6;
+	# cauchy eq A + B / ( wavelength squared ), applied to get the specific refractive index for each material
+	if materialSelect == 1
+		iorForWavelength = 1.4580 + 0.00354 / wavelengthFactor; # for Fused Silica glass
+	elseif materialSelect == 2
+		iorForWavelength = 1.5046 + 0.00420 / wavelengthFactor; # for Borosilicate glass BK7
+	elseif materialSelect == 3
+		iorForWavelength = 1.5220 + 0.00459 / wavelengthFactor; # for Hard crown glass K5
+	elseif materialSelect == 4
+		iorForWavelength = 1.5690 + 0.00531 / wavelengthFactor; # for Barium crown glass BaK4
+	elseif materialSelect == 5
+		iorForWavelength = 1.6700 + 0.00743 / wavelengthFactor; # for Barium flint glass BaF10
+	elseif materialSelect == 6
+		iorForWavelength = 1.7280 + 0.01342 / wavelengthFactor; # for Dense flint glass SF10
+	end
+
+	# iorForWavelength = remap( rayWavelength, 400, 700, 1.65, 1.5 ); # not physically based, but it looks interesting
 	rayOrigin = rayOrigin + displacement;
 	rayDirection = refract( rayDirection, normal, 1.0, iorForWavelength );
 
 	# place the second sphere, so that the center of the lens shape is slightly in front of the front surface of that element
-	elementRadius = 3.0;
+	elementRadius = 3.5;
 	elementCenter = [ 0 0 ( -1 * elementRadius ) + 0.5 ];
 	[ distance, normal ] = sphereIntersect( rayOrigin, rayDirection, elementCenter, elementRadius );
 	displacement = distance * rayDirection;
@@ -169,13 +184,18 @@ function shootRay( rayOrigin, rayDirection, rayWavelength )
 end
 
 # clear the sim field, pixel wavelength histograms
-# fieldImageWavelengths = zeros( xDimension, yDimension, numWavelengths );
+fieldImageWavelengths = zeros( xDimension, yDimension, numWavelengths );
 
 # run some N rays
-numRays = 2000;
+numRays = 10000;
+wavelengthOffsetsCount = numWavelengths + 1;
+verticalOffsets = linspace( -0.9, 0.9, numRays );
+wavelengthOffsets = linspace( minWavelength, maxWavelength, wavelengthOffsetsCount );
 for ray = 1:numRays
-	shootRay( [ 0 unifrnd( -0.9, 0.9 ) 0 ], [ 0 0 1 ], unifrnd( minWavelength, maxWavelength ) );
-	printf( "\rProcessing ray %d of %d          ", ray, numRays );
+	for i = 1:wavelengthOffsetsCount
+		shootRay( [ 0 verticalOffsets( ray ) + normrnd( 0, 1, 1 ) * 0.005 0 ], [ 0 0 1 ], wavelengthOffsets( i ) );
+	endfor
+	printf( "\rProcessing ray %d of %d          ", ray * wavelengthOffsetsCount, numRays * wavelengthOffsetsCount );
 end
 
 # create the output image
@@ -198,7 +218,7 @@ fieldImageWavelengthsNormalized = fieldImageWavelengths ./ maxFlux;
 
 for x = 1:xDimension
 	for y = 1:yDimension
-		# make this a 1d thing, "strip off singleton dimensions"
+		# make this a 1d thing, "strip off singleton dimensions" with squeeze()
 		fieldImage( x, y, : ) = sum( colors .* squeeze( fieldImageWavelengthsNormalized( x, y, : ) ), 1 );
 	endfor
 endfor
@@ -208,6 +228,6 @@ endfor
 image( fieldImage );
 
 # save out the fieldImage
-imwrite( fieldImage, 'test.png', 'png' );
+imwrite( fieldImage, 'testDe.png', 'png' );
 printf( "Image Written.\n" );
 # close all
